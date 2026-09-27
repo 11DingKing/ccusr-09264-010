@@ -13,7 +13,7 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from ..application.container import ApplicationContext
 from ..domain.enums import Role
@@ -394,6 +394,31 @@ class ApiHandler(BaseHTTPRequestHandler):
             ),
         )
 
+    # ----------------------------------------------------------- 审计订阅
+    def issue_audit_cursor(self) -> None:
+        actor = self._actor()
+        body = self._read_json()
+        self._send_json(201, self.services.audit.issue_cursor(actor, at=body["at"]))
+
+    def read_audit_events(self) -> None:
+        actor = self._actor()
+        params = parse_qs(urlparse(self.path).query)
+        since = self._first_param(params, "since")
+        cursor = self._first_param(params, "cursor")
+        limit_raw = self._first_param(params, "limit")
+        limit = int(limit_raw) if limit_raw is not None else 200
+        self._send_json(
+            200,
+            self.services.audit.read_events(
+                actor, since=since, cursor=cursor, limit=limit
+            ),
+        )
+
+    @staticmethod
+    def _first_param(params: dict, name: str) -> str | None:
+        values = params.get(name)
+        return values[0] if values else None
+
 
 # 路由表：方法 -> [(路径模式, 处理方法名)]
 def _routes() -> dict[str, list[tuple[str, str]]]:
@@ -413,6 +438,7 @@ def _routes() -> dict[str, list[tuple[str, str]]]:
         ("/v1/requests/{request_id}/respond", "respond_request"),
         ("/v1/requests/{request_id}/objections", "create_objection"),
         ("/v1/requests/{request_id}/verdict", "submit_verdict"),
+        ("/v1/audit/cursors", "issue_audit_cursor"),
     ]
     get = [
         ("/v1/materials/{material_id}", "get_material"),
@@ -420,6 +446,7 @@ def _routes() -> dict[str, list[tuple[str, str]]]:
         ("/v1/packages", "list_packages"),
         ("/v1/packages/{package_id}", "get_package"),
         ("/v1/packages/{package_id}/requests", "list_requests"),
+        ("/v1/audit/events", "read_audit_events"),
         (
             "/v1/packages/{package_id}/entries/{version_id}/content",
             "download_entry",

@@ -29,6 +29,11 @@ def main(argv: list[str] | None = None) -> int:
     serve_p.add_argument("--host", default="127.0.0.1")
     serve_p.add_argument("--port", type=int, default=8080)
     serve_p.add_argument("--bootstrap-token", default="")
+    serve_p.add_argument(
+        "--audit-cursor-secret",
+        default="",
+        help="审计订阅游标签名密钥；缺省每进程随机（重启后旧游标失效）",
+    )
 
     verify_p = sub.add_parser("verify", help="离线完整性核验")
     verify_p.add_argument("--db", required=True)
@@ -44,7 +49,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _serve(args: argparse.Namespace) -> int:
-    with ApplicationContext(args.db) as context:
+    secret = args.audit_cursor_secret.encode("utf-8") or None
+    with ApplicationContext(args.db, audit_cursor_secret=secret) as context:
         server = HttpApiServer(
             context,
             host=args.host,

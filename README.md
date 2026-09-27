@@ -46,6 +46,18 @@
 - 截止时间以“当地时间 + IANA 时区”输入，统一换算为 UTC 绝对时刻，正确
   处理跨时区与日界线。
 
+### 审计订阅游标
+- 审计角色可按游标重放审计事件流：起点由 `since`（ISO-8601 时刻，可带任意
+  时区偏移，统一归一化为 UTC）或上一页返回的 `next_cursor` 指定。
+- 游标负载为 `{schema, at, seq}`：`at` 是 UTC 时间锚点，`seq` 是同一时刻内
+  已确认的序列；负载经 **HMAC-SHA256 签名**（密钥仅服务端持有，
+  `--audit-cursor-secret` 可固定，缺省每进程随机）。
+- 非法游标（结构/签名/字段任一不符）立即 `400 invalid_cursor`，绝不静默
+  重定位；读取走 `(at, rowid)` 有序扫描，**同一时刻的多条事件不会被跳过**。
+- 服务端不保存订阅进度：同一游标重读返回同一起点，重复确认不跳事件；
+  订阅方处理完一页再持久化 `next_cursor`，崩溃后从最后确认的游标继续
+  （at-least-once）。
+
 ## 分层结构
 
 ```
@@ -106,6 +118,8 @@ python3 -m service_09252_006.cli verify --db ./data/qe.db [--json]
 | POST | `/v1/requests/{id}/verdict` | 提交 approve/object（object 须先有异议） |
 | POST | `/v1/requests/{id}/cancel` | 取消分配（即时收回敏感访问权） |
 | POST | `/v1/packages/{id}/decision` | 签发 approved/needs_revision/rejected |
+| POST | `/v1/audit/cursors` | 审计：签发从指定时间点开始的订阅游标 |
+| GET  | `/v1/audit/events` | 审计：按游标/`since` 重放事件（`limit` 分页） |
 
 评审状态机：`draft → sealed → under_review → decided`；复审包重新走一遍，
 旧包不复活。
@@ -120,7 +134,8 @@ python3 -m compileall -q service_09252_006 tests
 覆盖：内容寻址与版本链、封存不变量、**材料撤回**（封存前后）、后补材料
 只能复审、**最小披露与权限变化**（取消/拒绝/角色调整/跨机构）、
 **跨时区截止**（上海/伦敦/洛杉矶）、异议与签发约束、幂等重放与失败重试、
-多连接**并发复审**、离线核验对字节/清单/评审篡改的检出，以及完整 HTTP
-端到端流程。
+多连接**并发复审**、**审计订阅游标**（时间锚点、签名验签、重复确认不跳
+事件、非法游标快速失败）、离线核验对字节/清单/评审篡改的检出，以及完整
+HTTP 端到端流程。
 
 扩展模块覆盖证据、审批、权限、留存、对账与恢复等业务边界。

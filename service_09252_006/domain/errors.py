@@ -56,3 +56,10 @@ class IntegrityError(DomainError):
 
     code = "integrity_failure"
     http_status = 409
+
+
+class InvalidCursorError(DomainError):
+    """审计订阅游标无法解码或验签失败；订阅端应重新索取游标。"""
+
+    code = "invalid_cursor"
+    http_status = 400

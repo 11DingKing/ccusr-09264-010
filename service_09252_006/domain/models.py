@@ -144,6 +144,7 @@ class AuditEntry:
     action: str
     at: str
     detail: dict = field(default_factory=dict)
+    seq: int = 0  # 存储层行序（rowid），订阅游标在同一时刻内定位用
 
 
 def asdict(obj) -> dict:

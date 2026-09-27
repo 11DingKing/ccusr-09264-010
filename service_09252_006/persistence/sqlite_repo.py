@@ -27,7 +27,7 @@ from ..domain.models import (
     User,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SqliteRepository(Repository):
@@ -51,6 +51,20 @@ class SqliteRepository(Repository):
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if version >= SCHEMA_VERSION:
             return
+        if version < 1:
+            self._ensure_schema_v1()
+        if version < 2:
+            # 审计订阅游标：按 (at, rowid) 重放不跳事件；rowid 是隐式列，
+            # 不能入索引，仅按 at 建索引即可支撑锚点范围扫描
+            self._conn.executescript(
+                """
+                CREATE INDEX IF NOT EXISTS idx_audit_replay
+                    ON audit_log(at);
+                PRAGMA user_version = 2;
+                """
+            )
+
+    def _ensure_schema_v1(self) -> None:
         # executescript 会自行提交事务；把 user_version 写入放在同一脚本
         self._conn.executescript(
             """
@@ -647,25 +661,31 @@ class SqliteRepository(Repository):
     ) -> list[AuditEntry]:
         if package_id is None:
             rows = self._conn.execute(
-                "SELECT * FROM audit_log ORDER BY at DESC LIMIT ?", (limit,)
+                "SELECT rowid, * FROM audit_log ORDER BY at DESC LIMIT ?", (limit,)
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM audit_log WHERE package_id = ? ORDER BY at DESC LIMIT ?",
+                "SELECT rowid, * FROM audit_log WHERE package_id = ?"
+                " ORDER BY at DESC LIMIT ?",
                 (package_id, limit),
             ).fetchall()
-        return [
-            AuditEntry(
-                audit_id=r["audit_id"],
-                package_id=r["package_id"],
-                institution_id=r["institution_id"],
-                actor_id=r["actor_id"],
-                action=r["action"],
-                at=r["at"],
-                detail=json.loads(r["detail_json"]),
-            )
-            for r in rows
-        ]
+        return [_row_to_audit(r) for r in rows]
+
+    def list_audit_since(
+        self, anchor_at: str, seq: int, limit: int
+    ) -> list[AuditEntry]:
+        """订阅重放：锚点之后的事件按 (at, rowid) 升序返回。
+
+        边界条件 ``at = anchor AND rowid > seq`` 保证与已确认事件同一时刻
+        写入的后续事件不会被跳过；同一游标重读得到同一起点。
+        """
+        rows = self._conn.execute(
+            "SELECT rowid, * FROM audit_log"
+            " WHERE at > ? OR (at = ? AND rowid > ?)"
+            " ORDER BY at, rowid LIMIT ?",
+            (anchor_at, anchor_at, seq, limit),
+        ).fetchall()
+        return [_row_to_audit(r) for r in rows]
 
 
 def _row_to_user(row: sqlite3.Row) -> User:
@@ -716,4 +736,17 @@ def _row_to_entry(row: sqlite3.Row) -> PackageEntry:
         kind=row["kind"],
         sensitivity=row["sensitivity"],
         added_at=row["added_at"],
+    )
+
+
+def _row_to_audit(row: sqlite3.Row) -> AuditEntry:
+    return AuditEntry(
+        audit_id=row["audit_id"],
+        package_id=row["package_id"],
+        institution_id=row["institution_id"],
+        actor_id=row["actor_id"],
+        action=row["action"],
+        at=row["at"],
+        detail=json.loads(row["detail_json"]),
+        seq=row["rowid"],
     )

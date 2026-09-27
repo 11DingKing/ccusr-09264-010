@@ -148,3 +148,9 @@ class Repository(abc.ABC):
     def list_audit(
         self, package_id: str | None = None, limit: int = 200
     ) -> list[AuditEntry]: ...
+
+    @abc.abstractmethod
+    def list_audit_since(
+        self, anchor_at: str, seq: int, limit: int
+    ) -> list[AuditEntry]:
+        """按 (at, seq) 顺序重放锚点之后的事件，同时刻事件不得跳过。"""
