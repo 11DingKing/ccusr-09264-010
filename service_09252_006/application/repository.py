@@ -148,3 +148,11 @@ class Repository(abc.ABC):
     def list_audit(
         self, package_id: str | None = None, limit: int = 200
     ) -> list[AuditEntry]: ...
+
+    @abc.abstractmethod
+    def scan_audit(self, anchor_at: str, limit: int) -> list[AuditEntry]:
+        """订阅重放：从锚点时刻（含）起按 (at, audit_id) 升序读取。
+
+        闭区间 WHERE at >= anchor —— 重复确认同一游标时，锚点边界上的
+        事件会被再次返回，绝不跳过。
+        """

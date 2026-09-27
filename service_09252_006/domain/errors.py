@@ -23,6 +23,12 @@ class ValidationError(DomainError):
     http_status = 422
 
 
+class InvalidCursorError(ValidationError):
+    """订阅游标缺失、格式非法或签名无效：不查库即拒绝。"""
+
+    code = "invalid_cursor"
+
+
 class NotFoundError(DomainError):
     code = "not_found"
     http_status = 404

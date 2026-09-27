@@ -67,7 +67,7 @@ service_09252_006/
 # 数据库文件放在源码目录之外
 python3 -m service_09252_006.cli serve \
   --db ./data/qe.db --host 127.0.0.1 --port 8080 \
-  --bootstrap-token "$BOOTSTRAP_TOKEN"
+  --bootstrap-token "$BOOTSTRAP_TOKEN" --cursor-secret "$QE_CURSOR_SECRET"
 ```
 
 ## 离线完整性核验
@@ -106,6 +106,21 @@ python3 -m service_09252_006.cli verify --db ./data/qe.db [--json]
 | POST | `/v1/requests/{id}/verdict` | 提交 approve/object（object 须先有异议） |
 | POST | `/v1/requests/{id}/cancel` | 取消分配（即时收回敏感访问权） |
 | POST | `/v1/packages/{id}/decision` | 签发 approved/needs_revision/rejected |
+| POST | `/v1/audit/cursors` | 审计：签发订阅游标（可带 `anchor_at` 时间锚点） |
+| GET  | `/v1/audit/events?cursor=…` | 审计：从游标锚点重放审计事件 |
+
+### 审计订阅游标
+- 游标是**不透明令牌**：载荷只含一个 UTC 时间锚点，由服务端用
+  HMAC-SHA256 签名（`domain/cursor.py`，仅标准库）；密钥由
+  `ApplicationContext(cursor_secret=…)` 或 `QE_CURSOR_SECRET` 注入，
+  未配置时使用仅限开发的默认值。
+- 读取从锚点时刻（**含**）开始，按 `(at, audit_id)` 升序、闭区间
+  `WHERE at >= anchor` 扫描，`at` 相同时以 `audit_id` 稳定决胜。
+- **重复确认同一游标返回同样的起点**——确认动作不推进任何服务端状态，
+  边界时刻的事件会被再次返回，订阅方按 `audit_id` 去重即可，事件不丢。
+- 非法游标（格式错误、签名不符、锚点不可解析/无时区）在访问数据库
+  **之前**即以 `422 invalid_cursor` 快速失败。
+- 仅 `auditor` 角色可签发游标与订阅事件。
 
 评审状态机：`draft → sealed → under_review → decided`；复审包重新走一遍，
 旧包不复活。

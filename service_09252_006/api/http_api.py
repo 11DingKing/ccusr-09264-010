@@ -13,7 +13,7 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from ..application.container import ApplicationContext
 from ..domain.enums import Role
@@ -394,6 +394,37 @@ class ApiHandler(BaseHTTPRequestHandler):
             ),
         )
 
+    # -------------------------------------------------------- 审计订阅
+    def issue_audit_cursor(self) -> None:
+        actor = self._actor()
+        body = self._read_json()
+        self._send_json(
+            201,
+            self.services.audit_subscriptions.issue_cursor(
+                actor, anchor_at=body.get("anchor_at")
+            ),
+        )
+
+    def read_audit_events(self) -> None:
+        actor = self._actor()
+        query = parse_qs(urlparse(self.path).query)
+        cursor = query.get("cursor", [None])[0]
+        raw_limit = query.get("limit", [None])[0]
+        limit = 100
+        if raw_limit is not None:
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                from ..domain.errors import ValidationError
+
+                raise ValidationError("limit 必须是正整数")
+        self._send_json(
+            200,
+            self.services.audit_subscriptions.read_events(
+                actor, cursor, limit=limit
+            ),
+        )
+
 
 # 路由表：方法 -> [(路径模式, 处理方法名)]
 def _routes() -> dict[str, list[tuple[str, str]]]:
@@ -413,6 +444,7 @@ def _routes() -> dict[str, list[tuple[str, str]]]:
         ("/v1/requests/{request_id}/respond", "respond_request"),
         ("/v1/requests/{request_id}/objections", "create_objection"),
         ("/v1/requests/{request_id}/verdict", "submit_verdict"),
+        ("/v1/audit/cursors", "issue_audit_cursor"),
     ]
     get = [
         ("/v1/materials/{material_id}", "get_material"),
@@ -424,6 +456,7 @@ def _routes() -> dict[str, list[tuple[str, str]]]:
             "/v1/packages/{package_id}/entries/{version_id}/content",
             "download_entry",
         ),
+        ("/v1/audit/events", "read_audit_events"),
     ]
     return {"POST": post, "GET": get}
 

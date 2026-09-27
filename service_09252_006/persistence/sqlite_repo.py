@@ -27,7 +27,7 @@ from ..domain.models import (
     User,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SqliteRepository(Repository):
@@ -163,6 +163,8 @@ class SqliteRepository(Repository):
                     at             TEXT NOT NULL,
                     detail_json    TEXT NOT NULL DEFAULT '{}'
                 );
+                CREATE INDEX IF NOT EXISTS idx_audit_log_at
+                    ON audit_log(at, audit_id);
 
                 CREATE TABLE IF NOT EXISTS idempotency (
                     idempotency_key TEXT PRIMARY KEY,
@@ -176,7 +178,7 @@ class SqliteRepository(Repository):
                     created_at  TEXT NOT NULL
                 );
 
-                PRAGMA user_version = 1;
+                PRAGMA user_version = 2;
             """
         )
 
@@ -654,6 +656,26 @@ class SqliteRepository(Repository):
                 "SELECT * FROM audit_log WHERE package_id = ? ORDER BY at DESC LIMIT ?",
                 (package_id, limit),
             ).fetchall()
+        return [
+            AuditEntry(
+                audit_id=r["audit_id"],
+                package_id=r["package_id"],
+                institution_id=r["institution_id"],
+                actor_id=r["actor_id"],
+                action=r["action"],
+                at=r["at"],
+                detail=json.loads(r["detail_json"]),
+            )
+            for r in rows
+        ]
+
+    def scan_audit(self, anchor_at: str, limit: int) -> list[AuditEntry]:
+        # 闭区间、稳定次序：at 相同时以 audit_id 决胜，重复确认同一游标
+        # 返回同样的起点，边界事件不被跳过。
+        rows = self._conn.execute(
+            "SELECT * FROM audit_log WHERE at >= ? ORDER BY at, audit_id LIMIT ?",
+            (anchor_at, limit),
+        ).fetchall()
         return [
             AuditEntry(
                 audit_id=r["audit_id"],
